@@ -1,0 +1,71 @@
+from flask import Flask, render_template
+import json
+import urllib.request
+
+app = Flask(__name__)
+
+def get_crypto_price(symbol):
+    """دریافت قیمت لحظه‌ای کریپتو از صرافی بین‌المللی (بدون نیاز به کلید)"""
+    try:
+        url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode())
+            return float(data['price'])
+    except Exception as e:
+        print(f"Error fetching {symbol}: {e}")
+        return None
+
+def get_currency_price(symbol):
+    """دریافت قیمت لحظه‌ای ارزهای فیات (دلار، یورو، پوند، ریال عمان)"""
+    try:
+        # استفاده از API رایگان و باز برای نرخ ارز
+        url = f"https://open.er-api.com/v6/latest/{symbol}"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode())
+            # این API نرخ را نسبت به خود ارز می‌دهد (مثلاً 1 دلار چند دلار است = 1)
+            # برای سادگی در این نسخه، یک عدد پایه در نظر می‌گیریم و ضرب می‌کنیم
+            # در نسخه واقعی باید نرخ به تومان محاسبه شود
+            return data['rates'].get('IRR', None) # گرفتن نرخ ریال ایران
+    except Exception as e:
+        print(f"Error fetching {symbol}: {e}")
+        return None
+
+@app.route('/')
+def index():
+    prices = {}
+    
+    # ۱. دریافت قیمت بیت‌کوین و تتر به دلار
+    btc_usd = get_crypto_price("BTCUSDT")
+    tether_usd = 1.0 # تتر تقریباً همیشه ۱ دلار است
+    
+    # ۲. دریافت نرخ تبدیل دلار به ریال (برای محاسبه بقیه ارزها)
+    usd_to_irr = get_currency_price("USD")
+    
+    # اگر نرخ دلار به ریال گرفته شد، بقیه رو حساب می‌کنیم
+    if usd_to_irr:
+        # تبدیل به تومان (تقسیم بر ۱۰)
+        usd_to_toman = usd_to_irr / 10
+        
+        prices['dollar'] = int(usd_to_toman)
+        # در این API نرخ‌ها نسبت به دلار هستند (مثلاً 1 یورو = 1.08 دلار)
+        prices['euro'] = int(usd_to_toman * 1.08) 
+        prices['pound'] = int(usd_to_toman * 1.27)
+        prices['oman_rial'] = int(usd_to_toman * 2.60) # ۱ ریال عمان = ۲.۶ دلار
+        prices['tether'] = int(usd_to_toman * tether_usd)
+        
+        if btc_usd:
+            prices['bitcoin'] = int(btc_usd * usd_to_toman)
+        else:
+            prices['bitcoin'] = None
+    else:
+        # اگر اینترنت قطع بود یا API خطا داد
+        for key in ['dollar', 'euro', 'pound', 'oman_rial', 'tether', 'bitcoin']:
+            prices[key] = None
+
+    return render_template('index.html', prices=prices)
+
+if __name__ == '__main__':
+    # host='0.0.0.0' باعث میشه بتونی از گوشی هم وارد بشی
+    app.run(debug=True, host='0.0.0.0', port=5000)
